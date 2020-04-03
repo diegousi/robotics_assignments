@@ -65,8 +65,10 @@ class ThymioController:
         self.theta = 0
         self.x = 0
         self.y = 0
+        self.is_obstacle_infront = False
+        self.is_aligned = False
         self.rotating = False
-        self.aligning = False
+        
 
     def init_sensors(self):
         for sensor_name in self.subscriber_names:
@@ -152,11 +154,11 @@ class ThymioController:
 
         all_sensors = list(self.sensors_values.values())
         #print(all_sensors)
-        if any([value <= 0.05 for value in all_sensors]):
+        if any([value <= 0.045 for value in all_sensors]):
             print("went inside!!!")
             # close then stop
-            lin_vel = 0
-            self.aligning = True
+            lin_vel = 0.09
+            self.is_obstacle_infront = True
     
 
         return Twist(
@@ -172,26 +174,37 @@ class ThymioController:
             )
         )
 
-    def align(self):
-        ang_vel = 0.12
+    def align(self, tol=0.9):
+        
+        front_sensors = [self.sensors_values[sensor_name] for sensor_name in
+                        self.sensors_names if 'rear' not in sensor_name]
 
-        left_turn = self.sensors_values['left'] < self.sensors_values['right']
+        are_all_proximal = all([value < 0.05 for value in front_sensors])
+        ang_vel = 0.1 if not are_all_proximal else 0.01
+
+        left_turn = (
+                (self.sensors_values['left'] < self.sensors_values['right'])
+                     or
+                (self.sensors_values['center_left'] < self.sensors_values['right'])
+                     )
+        print("left turn ", left_turn)
 
         if not left_turn:
             ang_vel *= -1 
 
-        front_sensors = [self.sensors_values[sensor_name] for sensor_name in
-                        self.sensors_names if 'rear' not in sensor_name]
-
-
         center_sensor = front_sensors.pop(3)
         print("center sensor ", center_sensor)
         print("others ", front_sensors)
-        center_condition = [center_sensor < sensor for sensor in front_sensors]
-
-        if all(center_condition):
-            self.aligning = False
-            ang_vel = 0
+        center_condition = (np.isclose(center_sensor, front_sensors[1], tol)
+                            and
+                            np.isclose(center_sensor, front_sensors[2], tol)
+                            ) # center sensor has approx the same as left center
+                              # and right center
+        print("condition proximity ", are_all_proximal)
+        print("condition center ", center_condition)
+        if center_condition and are_all_proximal:
+            self.is_aligned = True
+            print("finished aligningind")
             #self.rotating = True
 
         return Twist(
@@ -251,12 +264,14 @@ class ThymioController:
 
 
             #sign, t0, velocity = self.draw_eight(sign, t0, t1)
-            if not self.aligning:
+            velocity = Twist()
+            if not self.is_obstacle_infront:
                 velocity = self.go_straight()
-            else:
+            elif not self.is_aligned:
                 velocity = self.align()
-
-            
+            else:
+                print("stopped")
+                #
 
             # publish velocity message
             self.velocity_publisher.publish(velocity)
