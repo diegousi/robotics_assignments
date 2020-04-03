@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import numpy as np
 import rospy
+import tf
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Pose, Twist, Vector3
 from sensor_msgs.msg import Range
@@ -40,6 +41,9 @@ class ThymioController:
             Odometry,  # message type
             self.log_odometry  # function that hanldes incoming messages
         )
+
+        self.tf_listener_ = tf.TransformListener()
+
         self.subscriber_names = ["/proximity/center_right", "/proximity/left",
                               "/proximity/center_left", "/proximity/center",
                               "/proximity/right", "/proximity/rear_left",
@@ -71,6 +75,7 @@ class ThymioController:
         self.is_obstacle_infront = False
         self.is_aligned = False
         self.is_rotating = False
+        self.finished = True
         
 
     def init_sensors(self):
@@ -114,7 +119,8 @@ class ThymioController:
 
     def log_odometry(self, data):
         """Updates robot pose and velocities, and logs pose to console."""
-
+        # print("data ")
+        # print(data)
         self.pose = data.pose.pose
         self.velocity = data.twist.twist
 
@@ -157,8 +163,7 @@ class ThymioController:
 
         all_sensors = list(self.sensors_values.values())
         #print(all_sensors)
-        if any([value <= 0.04 for value in all_sensors]):
-            print("went inside!!!")
+        if any([value <= 0.038 for value in all_sensors]):
             # close then stop
             lin_vel = 0.09
             self.is_obstacle_infront = True
@@ -182,7 +187,7 @@ class ThymioController:
         front_sensors = [self.sensors_values[sensor_name] for sensor_name in
                         self.sensors_names if 'rear' not in sensor_name]
 
-        are_all_proximal = all([value < 0.05 for value in front_sensors])
+        are_all_proximal = all([value < 0.08 for value in front_sensors])
         ang_vel = 0.1 if not are_all_proximal else 0.01
 
         left_turn = (
@@ -190,25 +195,25 @@ class ThymioController:
                      or
                 (self.sensors_values['center_left'] < self.sensors_values['right'])
                      )
-        print("left turn ", left_turn)
+        
 
         if not left_turn:
             ang_vel *= -1 
 
         center_sensor = front_sensors.pop(3)
-        print("center sensor ", center_sensor)
-        print("others ", front_sensors)
+        #print("center sensor ", center_sensor)
+        #print("others ", front_sensors)
         center_condition = (np.isclose(center_sensor, front_sensors[1], tol)
                             and
                             np.isclose(center_sensor, front_sensors[2], tol)
                             ) # center sensor has approx the same as left center
                               # and right center
-        print("condition proximity ", are_all_proximal)
-        print("condition center ", center_condition)
+        #print("condition proximity ", are_all_proximal)
+        #print("condition center ", center_condition)
         if center_condition and are_all_proximal:
             self.is_aligned = True
             self.is_rotating = True
-            print("finished aligningind")
+            #print("finished aligningind")
 
         return Twist(
             linear=Vector3(
@@ -223,24 +228,25 @@ class ThymioController:
             )
         )
 
-            
 
     def rotate(self):
         rear_left = self.sensors_values['rear_left']
         rear_right = self.sensors_values['rear_right']
 
-        is_proximal = (rear_left <= 0.05
+        is_proximal = (rear_left < 0.08
                         or
-                       rear_right <= 0.05)
+                       rear_right < 0.08)
 
-        ang_vel = 0.1 if not is_proximal else 0.01
+        ang_vel = 0.3 if not is_proximal else 0.1
 
         print("left ", self.sensors_values['rear_left'])
         print("right ", self.sensors_values['rear_right'])
-        diff = rear_left - rear_right
+        diff = np.abs(rear_left - rear_right)
         print("diff {}".format(diff))
+        print("diff comp {}".format(diff <= 1e-3 *2/3 ))
 
-        if is_proximal and (np.isclose(rear_left, rear_right, 0.8)):
+
+        if is_proximal and diff <= (1e-3/2):
             vel = 0
             self.is_rotating = False 
 
@@ -258,6 +264,38 @@ class ThymioController:
             )
         )
 
+    def get_target_location(self):
+        theta = self.theta
+        t = self.tf_listener_.getLatestCommonTime("thymio10/base_link", "/thymio10")
+        p1 = geometry_msgs.msg.PoseStamped()
+        p1.header.frame_id = "thymio10"
+        p1.pose.orientation.w = 1.0    # Neutral orientation
+        p_in_base = self.tf_listener_.transformPose("thymio10/base_link", p1)
+        print "Position of the thymio10 in the robot base:"
+        print p_in_base
+
+
+    def advance_2mts(self):
+        lin_vel = 0
+        print(" target is ", self.get_target_location())
+
+        # if thym_euc_dist(x2=, y2=) <= 0.3:
+        #     lin_vel = 0
+        #     self.finished = True
+
+        return Twist(
+            linear=Vector3(
+                lin_vel, 
+                .0,
+                .0,
+            ),
+            angular=Vector3(
+                .0,
+                .0,
+                .0 
+            )
+        )
+
     def run(self):
         """Controls the Thymio."""
         t0 = rospy.Time.now().to_sec()
@@ -271,13 +309,18 @@ class ThymioController:
 
             #sign, t0, velocity = self.draw_eight(sign, t0, t1)
             velocity = Twist()
+
+            #self.get_target_location()
+
             if not self.is_obstacle_infront:
                 velocity = self.go_straight()
             elif not self.is_aligned:
                 velocity = self.align()
             elif self.is_rotating:
                 velocity = self.rotate()
-                #
+            # else:
+            #     velocity = self.advance_2mts()
+                
 
             # publish velocity message
             self.velocity_publisher.publish(velocity)
