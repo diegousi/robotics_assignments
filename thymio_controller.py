@@ -6,8 +6,11 @@ from geometry_msgs.msg import Pose, Twist, Vector3
 from sensor_msgs.msg import Range
 from tf.transformations import euler_from_quaternion
 
-from controllers import PID, euclidean_distance
 
+def euclidean_distance(x1, x2, y1, y2):
+    return np.sqrt( 
+                np.power((x2 - x1), 2) + np.power((y2 - y1), 2)
+                )
 
 class ThymioController:
 
