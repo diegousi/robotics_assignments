@@ -67,7 +67,7 @@ class ThymioController:
         self.y = 0
         self.is_obstacle_infront = False
         self.is_aligned = False
-        self.rotating = False
+        self.is_rotating = False
         
 
     def init_sensors(self):
@@ -154,7 +154,7 @@ class ThymioController:
 
         all_sensors = list(self.sensors_values.values())
         #print(all_sensors)
-        if any([value <= 0.045 for value in all_sensors]):
+        if any([value <= 0.04 for value in all_sensors]):
             print("went inside!!!")
             # close then stop
             lin_vel = 0.09
@@ -204,12 +204,12 @@ class ThymioController:
         print("condition center ", center_condition)
         if center_condition and are_all_proximal:
             self.is_aligned = True
+            self.is_rotating = True
             print("finished aligningind")
-            #self.rotating = True
 
         return Twist(
             linear=Vector3(
-                 0,  # moves forward .2 m/s
+                 0,
                 .0,
                 .0,
             ),
@@ -223,32 +223,35 @@ class ThymioController:
             
 
     def rotate(self):
-        vel = 0.3
-        is_proximal = (self.sensors_values['rear_left'] <= 0.075
+        rear_left = self.sensors_values['rear_left']
+        rear_right = self.sensors_values['rear_right']
+
+        is_proximal = (rear_left <= 0.05
                         or
-                        self.sensors_values['rear_right'] <= 0.075)
+                       rear_right <= 0.05)
+
+        ang_vel = 0.1 if not is_proximal else 0.01
+
         print("left ", self.sensors_values['rear_left'])
         print("right ", self.sensors_values['rear_right'])
-        diff = self.sensors_values['rear_left'] - self.sensors_values['rear_right']
+        diff = rear_left - rear_right
         print("diff {}".format(diff))
 
-        if is_proximal and (np.isclose(diff, 0, 0.005)):
-
-        # if np.isclose(self.theta, np.pi): 
+        if is_proximal and (np.isclose(rear_left, rear_right, 0.8)):
             vel = 0
-            self.rotating = False 
+            self.is_rotating = False 
 
 
         return Twist(
             linear=Vector3(
-                .0,  # moves forward .2 m/s
+                .0, 
                 .0,
                 .0,
             ),
             angular=Vector3(
                 .0,
                 .0,
-                vel 
+                ang_vel 
             )
         )
 
@@ -269,8 +272,8 @@ class ThymioController:
                 velocity = self.go_straight()
             elif not self.is_aligned:
                 velocity = self.align()
-            else:
-                print("stopped")
+            elif self.is_rotating:
+                velocity = self.rotate()
                 #
 
             # publish velocity message
