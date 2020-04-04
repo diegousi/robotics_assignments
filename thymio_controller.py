@@ -76,6 +76,7 @@ class ThymioController:
         self.is_aligned = False
         self.is_rotating = False
         self.finished = True
+        self.rear_sensor_tol = 1e-3
         
 
     def init_sensors(self):
@@ -213,6 +214,7 @@ class ThymioController:
         if center_condition and are_all_proximal:
             self.is_aligned = True
             self.is_rotating = True
+
             #print("finished aligningind")
 
         return Twist(
@@ -229,7 +231,8 @@ class ThymioController:
         )
 
 
-    def rotate(self):
+    def rotate(self, is_random=False):
+
         rear_left = self.sensors_values['rear_left']
         rear_right = self.sensors_values['rear_right']
 
@@ -238,17 +241,23 @@ class ThymioController:
                        rear_right < 0.08)
 
         ang_vel = 0.3 if not is_proximal else 0.1
+        left_turn = rear_left < rear_right
 
-        print("left ", self.sensors_values['rear_left'])
-        print("right ", self.sensors_values['rear_right'])
+        if left_turn:
+            ang_vel *= -1
+
+        print("left ", rear_left)
+        print("right ", rear_left)
         diff = np.abs(rear_left - rear_right)
         print("diff {}".format(diff))
-        print("diff comp {}".format(diff <= 1e-3 *2/3 ))
+        print("diff comp {}".format(diff <= self.rear_sensor_tol))
 
 
-        if is_proximal and diff <= (1e-3/2):
+        if is_proximal and diff <= self.rear_sensor_tol:
             vel = 0
-            self.is_rotating = False 
+            self.is_rotating = False
+            self.is_obstacle_infront = False
+            self.is_aligned = False
 
 
         return Twist(
@@ -301,6 +310,7 @@ class ThymioController:
         t0 = rospy.Time.now().to_sec()
         turn = 'right'
         sign = 1
+        random_explore = True
         while not rospy.is_shutdown():
 
             # decide control action
@@ -317,6 +327,8 @@ class ThymioController:
             elif not self.is_aligned:
                 velocity = self.align()
             elif self.is_rotating:
+                if random_explore:
+                    self.rear_sensor_tol = np.random.uniform(-0.1, 0.1)
                 velocity = self.rotate()
             # else:
             #     velocity = self.advance_2mts()
