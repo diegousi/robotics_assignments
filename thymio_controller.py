@@ -76,13 +76,17 @@ class ThymioController:
         self.is_aligned = False
         self.is_rotating = False
         self.finished = True
-        self.rear_sensor_tol = 1e-3
+        self.start_rotation_time = None
+        self.angle = None
+        self.action_start_time = None
+        self.sign = None
         
 
     def init_sensors(self):
         for sensor_name in self.subscriber_names:
             key_name = sensor_name.replace("/proximity/", "")
-
+            print("HEEERREEEE")
+            print(self.name + sensor_name)
             self.sensors_subscribers[key_name] = rospy.Subscriber(
                 self.name + sensor_name, Range, self.log_sensor)
             self.sensors_values[key_name] = {}
@@ -139,6 +143,9 @@ class ThymioController:
     def angle_difference(self, angle1, angle2=np.pi/2):
         return np.arctan2(np.sin(angle1-angle2), np.cos(angle1-angle2))
 
+    def get_sensor_proximal(self):
+        pass
+
 
     def draw_eight(self, sign, t0, t1):
         tol = 0.1
@@ -164,10 +171,11 @@ class ThymioController:
 
         all_sensors = list(self.sensors_values.values())
         #print(all_sensors)
-        if any([value <= 0.038 for value in all_sensors]):
+        if any([value <= 0.045 for value in all_sensors]):
             # close then stop
             lin_vel = 0.09
             self.is_obstacle_infront = True
+            #self.is_rotating = True
     
 
         return Twist(
@@ -230,34 +238,65 @@ class ThymioController:
             )
         )
 
+    def advance_2mts(self):
+        #10s at 0.1 m/s -> 1m
+        if(self.action_start_time == None): 
+            self.action_start_time = rospy.Time.now().to_sec()
+            print('START, ', self.action_start_time)
 
-    def rotate(self, is_random=False):
+        elapsed_time = rospy.Time.now().to_sec() - self.action_start_time
+        print('elapsed_time, ', elapsed_time)
+        lin_vel=0.5
+        if(elapsed_time*0.5>2):
+            self.action_start_time = -1
+            lin_vel = 0 
 
+        return Twist(
+            linear=Vector3(
+                lin_vel, 
+                .0,
+                .0,
+            ),
+            angular=Vector3(
+                .0,
+                .0,
+                .0 
+            )
+        )
+
+
+    def rotate(self):
+        print('-' )
         rear_left = self.sensors_values['rear_left']
         rear_right = self.sensors_values['rear_right']
+
+        print('rear right', rear_right)
+        print('rear left', rear_left)
 
         is_proximal = (rear_left < 0.08
                         or
                        rear_right < 0.08)
+        print('is is_proximal', is_proximal)
+        sensor_differences = rear_left - rear_right
+        print('sensor differ' ,sensor_differences)
 
-        ang_vel = 0.3 if not is_proximal else 0.1
-        left_turn = rear_left < rear_right
+        ang_vel = 0.3 if not is_proximal else 10 * sensor_differences
 
-        if left_turn:
-            ang_vel *= -1
-
-        print("left ", rear_left)
-        print("right ", rear_left)
-        diff = np.abs(rear_left - rear_right)
-        print("diff {}".format(diff))
-        print("diff comp {}".format(diff <= self.rear_sensor_tol))
-
-
-        if is_proximal and diff <= self.rear_sensor_tol:
+        if is_proximal and np.abs(sensor_differences) <= 1e-3:
             vel = 0
             self.is_rotating = False
-            self.is_obstacle_infront = False
-            self.is_aligned = False
+
+        # current_time = rospy.Time.now().to_sec()
+        
+        # if self.start_rotation_time is not None:
+        #     elapsed_time = current_time - self.start_rotation_time
+        #     print("elapsed_time ", elapsed_time)
+        #     if elapsed_time > 15:
+        #         all_sensors = [self.sensors_values[sensor_name] > 0.11 for sensor_name in
+        #                 self.sensors_names]
+        #         if all(all_sensors):
+        #             vel = 0
+        #             self.is_rotating = False
 
 
         return Twist(
@@ -273,37 +312,6 @@ class ThymioController:
             )
         )
 
-    def get_target_location(self):
-        theta = self.theta
-        t = self.tf_listener_.getLatestCommonTime("thymio10/base_link", "/thymio10")
-        p1 = geometry_msgs.msg.PoseStamped()
-        p1.header.frame_id = "thymio10"
-        p1.pose.orientation.w = 1.0    # Neutral orientation
-        p_in_base = self.tf_listener_.transformPose("thymio10/base_link", p1)
-        print "Position of the thymio10 in the robot base:"
-        print p_in_base
-
-
-    def advance_2mts(self):
-        lin_vel = 0
-        print(" target is ", self.get_target_location())
-
-        # if thym_euc_dist(x2=, y2=) <= 0.3:
-        #     lin_vel = 0
-        #     self.finished = True
-
-        return Twist(
-            linear=Vector3(
-                lin_vel, 
-                .0,
-                .0,
-            ),
-            angular=Vector3(
-                .0,
-                .0,
-                .0 
-            )
-        )
 
     def run(self):
         """Controls the Thymio."""
@@ -320,18 +328,15 @@ class ThymioController:
             #sign, t0, velocity = self.draw_eight(sign, t0, t1)
             velocity = Twist()
 
-            #self.get_target_location()
-
             if not self.is_obstacle_infront:
                 velocity = self.go_straight()
             elif not self.is_aligned:
+                #pass
                 velocity = self.align()
             elif self.is_rotating:
-                if random_explore:
-                    self.rear_sensor_tol = np.random.uniform(-0.1, 0.1)
                 velocity = self.rotate()
-            # else:
-            #     velocity = self.advance_2mts()
+            else:
+                 velocity = self.advance_2mts()
                 
 
             # publish velocity message
